@@ -1,10 +1,13 @@
-# swift-schema
+# swift-codomain
 
 **Parse, don't validate** for Swift. Declare each rule once, get typed values or every error at once,
 and let the compiler catch the mistakes. In the spirit of Zod and io-ts.
 
+The name: a function maps its *domain* to its *codomain*. Raw input is the domain; your typed models are
+the codomain.
+
 ```swift
-import Schema
+import Codomain
 
 enum TodoFailure: Error { case blank, tooLong }
 
@@ -16,7 +19,7 @@ struct Title {
     )
 }
 
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct Todo {
     let title: Title
 }
@@ -36,7 +39,7 @@ todo.title.value  // "Buy milk"
   and enums as tagged unions.
 - **Common checks built in:** string (`email`, `url`, `uuid`, `datetime`, `ip`, lengths), number
   (`within`, `positive`, `multiple(of:)`), and array counts, in the style of Zod.
-- **JSON in, JSON out:** `decode(json:)` and `json()` for `@JSONSchema` types, with snake_case keys,
+- **JSON in, JSON out:** `decode(json:)` and `json()` for `@JSONParsable` types, with snake_case keys,
   defaults, strict mode, and custom or unknown union tags.
 
 ## Why parse?
@@ -70,7 +73,7 @@ case .failure(let failure): print(failure)  // .blank or .tooLong
 
 ### Why not just `Codable`?
 
-| | `Codable` alone | swift-schema |
+| | `Codable` alone | swift-codomain |
 |---|---|---|
 | Errors | `JSONDecoder` throws at the first problem | Every problem, each with its path |
 | Rules (trim, length, email…) | Hand-written in `init(from:)` or after decoding | One `codec` per field type, reused by every model |
@@ -89,18 +92,18 @@ dependencies: [
     .package(url: "[REF NEEDED: repository URL]", from: "0.1.0"),
 ],
 targets: [
-    .target(name: "App", dependencies: [.product(name: "Schema", package: "swift-schema")]),
+    .target(name: "App", dependencies: [.product(name: "Codomain", package: "swift-codomain")]),
 ]
 ```
 
-`@Codec`, `@Schema` and `@JSONSchema` are Swift macros: Xcode asks you to trust the macro once.
+`@Codec`, `@Parsable` and `@JSONParsable` are Swift macros: Xcode asks you to trust the macro once.
 On CI, `xcodebuild` cannot ask, so pass `-skipMacroValidation`
 (`swift build` and `swift test` need no flag).
 
 ## Getting Started
 
 We build a todo list that arrives as JSON. Every snippet below compiles and every output shown is checked
-in `Tests/SchemaReadmeTests/ReadmeTests.swift`.
+in `Tests/CodomainReadmeTests/ReadmeTests.swift`.
 
 ### 1. Name your failures
 
@@ -108,7 +111,7 @@ One enum lists everything that can be wrong with a value:
 
 ```swift
 import Foundation
-import Schema
+import Codomain
 
 enum TodoFailure: Error, Equatable {
     case blank, tooLong, tooShort, noDigit, notAnEmail, notADate, endsBeforeStart
@@ -173,13 +176,13 @@ Write the struct you want to use. Properties can be field types, other models, a
 dictionaries, and optionals:
 
 ```swift
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct Member {
     let email: Email
     let name: Title
 }
 
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct Todo {
     let title: Title
     let due: DueDate?     // key may be missing
@@ -187,7 +190,7 @@ struct Todo {
     let subtasks: [Todo]  // recursion works
 }
 
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct TodoList {
     let title: Title
     let owner: Member
@@ -277,10 +280,10 @@ Decoding what you encoded gives the same value back.
 
 ### 7. Without JSON
 
-Use `@Schema` when input does not come from JSON (forms, other models). You build the `Input` yourself:
+Use `@Parsable` when input does not come from JSON (forms, other models). You build the `Input` yourself:
 
 ```swift
-@Schema(failure: TodoFailure.self)
+@Parsable(failure: TodoFailure.self)
 struct SignUp {
     let email: Email
     let name: Title
@@ -303,7 +306,7 @@ A rule that compares fields goes in `static func refine`. It runs only after eve
 it works with parsed values:
 
 ```swift
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct Sprint {
     let starts: DueDate
     let ends: DueDate
@@ -330,7 +333,7 @@ enum TodoFailure: Error, Equatable {
 }
 ```
 
-Every `@Schema` and `@JSONSchema` property then converts with the `lift` whose parameter matches. A
+Every `@Parsable` and `@JSONParsable` property then converts with the `lift` whose parameter matches. A
 `Member` with `MemberFailure` inside a `TodoList` reports
 `Issue(path: "owner.email", failure: .member(.notAnEmail))`. With no matching `lift`, the build fails.
 
@@ -340,13 +343,13 @@ An enum whose cases each hold one model is a tagged union. In JSON, the `tag` ke
 model's keys sit next to it:
 
 ```swift
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct AtTime { let due: DueDate }
 
-@JSONSchema(failure: TodoFailure.self)
+@JSONParsable(failure: TodoFailure.self)
 struct AtPlace { let place: Title }
 
-@JSONSchema(failure: TodoFailure.self, tag: "kind")
+@JSONParsable(failure: TodoFailure.self, tag: "kind")
 enum Trigger {
     case time(AtTime)
     case place(AtPlace)
@@ -367,7 +370,7 @@ that tag, and `json()` writes it. To accept tags you don't model (for example on
 version), add one `@UnknownTag case other(String)`:
 
 ```swift
-@JSONSchema(failure: TodoFailure.self, tag: "type")
+@JSONParsable(failure: TodoFailure.self, tag: "type")
 enum Trigger {
     @JSONTag("TIME") case time(AtTime)
     @JSONTag("PLACE") case place(AtPlace)
@@ -381,7 +384,7 @@ enum Trigger {
 With `@UnknownTag`, an absent or `null` tag is still `missing`, and a tag that is not a string is
 `wrongType(expected: "string")`.
 
-Without JSON, `@Schema(failure:)` on an enum takes no `tag`, and its cases may also hold field types.
+Without JSON, `@Parsable(failure:)` on an enum takes no `tag`, and its cases may also hold field types.
 An enum can declare `static func refine` like a struct.
 
 Dictionaries with `String` keys work like arrays: `let labels: [String: Title]` reads a JSON object and
@@ -390,7 +393,7 @@ reports `labels["work"]: blank`. Problems are listed in key order.
 ### 11. Match an existing API
 
 ```swift
-@JSONSchema(failure: TodoFailure.self, keys: .snakeCase, strict: true)
+@JSONParsable(failure: TodoFailure.self, keys: .snakeCase, strict: true)
 struct Reminder {
     let dueDate: DueDate               // JSON key "due_date"
     @JSONKey("msg") let text: Title    // JSON key "msg"
@@ -493,7 +496,7 @@ To encode, pass `encoded` (the `Codable` `Input`) to the format's encoder. When 
 that is not a `DecodingError`, the result is `.unreadable(.dataCorrupted(…))` with that error as
 `underlyingError`. `DecodeFailure` and `DecodeProblem` are the same for every format.
 
-With XMLCoder (tested in `Tests/SchemaXMLTests`):
+With XMLCoder (tested in `Tests/CodomainXMLTests`):
 
 | XML input | Result |
 |---|---|
@@ -618,17 +621,17 @@ the rule can decide the value is absent. Such a field can only be used as an opt
 Law: `mk(x.encoded)` gives back `x`. The reverse does not hold for normalizing rules:
 `" Ada@X.io "` encodes as `"ada@x.io"`.
 
-### `@Schema`
+### `@Parsable`
 
 Turns a struct into a model, or an enum into a union.
 
 #### Signature
 
 ```swift
-@Schema(failure: Failure.self)
+@Parsable(failure: Failure.self)
 struct Name { /* stored properties */ }
 
-@Schema(failure: Failure.self)
+@Parsable(failure: Failure.self)
 enum Name { case a(A), b(B) /* each case holds one field type or model */ }
 ```
 
@@ -657,23 +660,23 @@ every field has parsed and fails with its issues. A wrong signature is a compile
 Each property's failure is converted with `Failure.lift`. The library provides `lift(_: Self) -> Self` on
 every `Error`; add overloads to nest other failure types (see [Mix failure types](#9-mix-failure-types)).
 
-### `@JSONSchema`
+### `@JSONParsable`
 
-`@Schema` plus JSON. Every property must be readable from JSON, so a plain `@Schema` model inside a
-`@JSONSchema` model fails to compile.
+`@Parsable` plus JSON. Every property must be readable from JSON, so a plain `@Parsable` model inside a
+`@JSONParsable` model fails to compile.
 
 #### Signature
 
 ```swift
-@JSONSchema(failure: Failure.self, keys: JSONKeys = .swift, strict: Bool = false)
+@JSONParsable(failure: Failure.self, keys: JSONKeys = .swift, strict: Bool = false)
 struct Name {
     @JSONKey("json_key") let a: A  // optional: overrides the key
     @Default(raw) let b: B         // optional: value when absent or null
 }
 
-@JSONSchema(failure: Failure.self, tag: "kind")
+@JSONParsable(failure: Failure.self, tag: "kind")
 enum Name {
-    case a(A)                  // each case holds one @JSONSchema model
+    case a(A)                  // each case holds one @JSONParsable model
     @JSONTag("B") case b(B)    // optional: overrides the tag
     @UnknownTag case other(String)  // optional: any other string tag
 }
@@ -683,7 +686,7 @@ enum Name {
 
 #### Generates
 
-Everything `@Schema` generates, with `Input: Codable`, plus:
+Everything `@Parsable` generates, with `Input: Codable`, plus:
 
 - `static func decode(json: Data) -> Result<Name, DecodeFailure<Failure>>`: reads every key, reports every problem.
 - `static func decode(_: Data, using: some DataDecoder) -> Result<Name, DecodeFailure<Failure>>`: the same,
@@ -738,20 +741,20 @@ Each row was checked by introducing the mistake and building.
 | Property type has no rule (`String`, `Int`) | `'Input' is not a member type of …` |
 | Field that can be absent, used as required | `requires that '…' conform to 'Parsable'` |
 | Array of a type without a rule (`[String]`) | `requires that 'String' conform to 'Parsable'` |
-| Property without a type annotation | `@Schema needs an explicit type on '…'` |
-| `@Schema` model inside a `@JSONSchema` model | `'….Input' does not conform to protocol 'Decodable'` |
+| Property without a type annotation | `@Parsable needs an explicit type on '…'` |
+| `@Parsable` model inside a `@JSONParsable` model | `'….Input' does not conform to protocol 'Decodable'` |
 | Creating a field type without its rule (`Title("")`) | `initializer is inaccessible due to 'private' protection level` |
 | `@Codec` without `codec` | `@Codec needs 'static let codec: Codec<Input, Value, Failure>'` |
 | `codec` without a type annotation | `'codec' needs an explicit type: Codec<Input, Value, Failure>` |
 | `encode` returning the wrong type | `cannot convert value of type …` |
 | Hand-written `let value` next to `@Codec` | `invalid redeclaration of 'value'` |
 | `refine` returning the wrong type (`Bool`) | `value of type 'Bool' has no member 'isEmpty'` |
-| Enum case without exactly one unlabeled value | `@Schema enum cases hold exactly one unlabeled value: 'case b(Model)'` |
-| `@JSONSchema` enum without `tag:` | `usage: @JSONSchema(failure: Failure.self, tag: "kind") on an enum` |
-| `@JSONSchema` enum case holding a field type, not a model | `requires that 'Title' conform to 'JSONParsable'` |
-| `@JSONKey` in a plain `@Schema` | `@JSONKey applies to @JSONSchema properties only` |
-| `@JSONTag` in a plain `@Schema` enum | `@JSONTag applies to @JSONSchema enum cases only` |
-| `@UnknownTag` on a case other than `case x(String)`, or twice | `@UnknownTag marks one 'case other(String)' of a @JSONSchema enum` |
+| Enum case without exactly one unlabeled value | `@Parsable enum cases hold exactly one unlabeled value: 'case b(Model)'` |
+| `@JSONParsable` enum without `tag:` | `usage: @JSONParsable(failure: Failure.self, tag: "kind") on an enum` |
+| `@JSONParsable` enum case holding a field type, not a model | `requires that 'Title' conform to 'JSONParsable'` |
+| `@JSONKey` in a plain `@Parsable` | `@JSONKey applies to @JSONParsable properties only` |
+| `@JSONTag` in a plain `@Parsable` enum | `@JSONTag applies to @JSONParsable enum cases only` |
+| `@UnknownTag` on a case other than `case x(String)`, or twice | `@UnknownTag marks one 'case other(String)' of a @JSONParsable enum` |
 | `@Default` on an optional property | `@Default applies to non-optional properties only` |
 | `strict:` or `keys:` given a variable instead of a literal | `strict: must be true or false`, `keys: must be .swift or .snakeCase` |
 | Two properties with the same JSON key | `JSON key 'user_id' is already used by 'userID'` |
@@ -795,14 +798,14 @@ git push origin 0.1.0   # a tag with a hyphen, e.g. 0.2.0-beta.1, becomes a prer
 
 | Directory | Contents |
 |---|---|
-| `Sources/Schema/` | Library: `Schema.swift` (steps, `Codec`), `Field.swift`, `Issues.swift`, `JSON.swift`, `SchemaMacro.swift` (macro declarations) |
-| `Sources/Schema/Primitives/` | Built-in steps for `String`, numbers and arrays |
-| `Sources/SchemaMacros/` | Macro implementations: `SchemaMacro.swift` (`@Schema`, `@JSONSchema`), `CodecMacro.swift`, `MarkerMacro.swift` |
-| `Tests/SchemaTests/` | Unit tests, one file per library file |
-| `Tests/SchemaMacrosTests/` | Generated-code snapshots and every macro error message |
-| `Tests/SchemaSmokeTests/` | A full todo-list domain: fixtures, round trips, 500 seeded random trees, 10,000 items, Unicode, hostile JSON, depth limits, 200 parallel decodes |
-| `Tests/SchemaReadmeTests/` | Every README snippet and documented output; update it with the README |
-| `Tests/SchemaXMLTests/` | `decode(_:using:)` with XMLCoder: repeated elements, absent and empty elements, attributes |
+| `Sources/Codomain/` | Library: `Schema.swift` (steps, `Codec`), `Field.swift`, `Issues.swift`, `JSON.swift`, `ParsableMacro.swift` (macro declarations) |
+| `Sources/Codomain/Primitives/` | Built-in steps for `String`, numbers and arrays |
+| `Sources/CodomainMacros/` | Macro implementations: `ParsableMacro.swift` (`@Parsable`, `@JSONParsable`), `CodecMacro.swift`, `MarkerMacro.swift` |
+| `Tests/CodomainTests/` | Unit tests, one file per library file |
+| `Tests/CodomainMacrosTests/` | Generated-code snapshots and every macro error message |
+| `Tests/CodomainSmokeTests/` | A full todo-list domain: fixtures, round trips, 500 seeded random trees, 10,000 items, Unicode, hostile JSON, depth limits, 200 parallel decodes |
+| `Tests/CodomainReadmeTests/` | Every README snippet and documented output; update it with the README |
+| `Tests/CodomainXMLTests/` | `decode(_:using:)` with XMLCoder: repeated elements, absent and empty elements, attributes |
 
 ## License
 

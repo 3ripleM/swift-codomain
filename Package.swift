@@ -3,10 +3,10 @@ import CompilerPluginSupport
 import PackageDescription
 
 let package = Package(
-    name: "swift-schema",
+    name: "swift-codomain",
     platforms: [.macOS(.v13), .iOS(.v16)],
     products: [
-        .library(name: "Schema", targets: ["Schema"])
+        .library(name: "Codomain", targets: ["Codomain"])
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0"),
@@ -15,28 +15,28 @@ let package = Package(
     ],
     targets: [
         .macro(
-            name: "SchemaMacros",
+            name: "CodomainMacros",
             dependencies: [
                 .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
             ]
         ),
-        .target(name: "Schema", dependencies: ["SchemaMacros"]),
+        .target(name: "Codomain", dependencies: ["CodomainMacros"]),
         .testTarget(
-            name: "SchemaSmokeTests", dependencies: ["Schema"],
+            name: "CodomainSmokeTests", dependencies: ["Codomain"],
             swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
-            name: "SchemaTests", dependencies: ["Schema"], swiftSettings: [.swiftLanguageMode(.v6)]),
+            name: "CodomainTests", dependencies: ["Codomain"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
-            name: "SchemaReadmeTests", dependencies: ["Schema", "XMLCoder"],
+            name: "CodomainReadmeTests", dependencies: ["Codomain", "XMLCoder"],
             swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
-            name: "SchemaXMLTests", dependencies: ["Schema", "XMLCoder"],
+            name: "CodomainXMLTests", dependencies: ["Codomain", "XMLCoder"],
             swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
-            name: "SchemaMacrosTests",
+            name: "CodomainMacrosTests",
             dependencies: [
-                "SchemaMacros",
+                "CodomainMacros",
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]

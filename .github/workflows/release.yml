@@ -33,5 +33,5 @@ jobs:
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
           # shellcheck disable=SC2016 # backticks are Markdown, not command substitution
-          notes=$(printf '## Install\n\n```swift\n.package(url: "%s", from: "%s")\n```\n\nThen add `.product(name: "Schema", package: "swift-schema")` to your target.\n' "$PACKAGE_REPOSITORY_URL" "$TAG")
+          notes=$(printf '## Install\n\n```swift\n.package(url: "%s", from: "%s")\n```\n\nThen add `.product(name: "Codomain", package: "swift-codomain")` to your target.\n' "$PACKAGE_REPOSITORY_URL" "$TAG")
           gh release create "$TAG" --verify-tag --generate-notes --notes "$notes" $prerelease
