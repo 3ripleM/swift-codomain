@@ -2,7 +2,7 @@ import Foundation
 import Schema
 import Testing
 
-private func decode(_ json: String) -> Result<TodoList, JSONFailure<TodoFailure>> {
+private func decode(_ json: String) -> Result<TodoList, DecodeFailure<TodoFailure>> {
     TodoList.decode(json: Data(json.utf8))
 }
 
@@ -55,12 +55,12 @@ private func decode(_ json: String) -> Result<TodoList, JSONFailure<TodoFailure>
         ("items[1].tags[0]", .notASlug),
     ]
     #expect(issues.all.map(\.path) == expected.map(\.0))
-    #expect(issues == Issues(expected.map { .init(path: $0.0, failure: $0.1) }))
+    #expect(issues == Issues(expected.map { .init(path: $0.0, failure: .rule($0.1)) }))
 }
 
-@Test func structurallyBrokenJSONNeverReachesTheSchema() {
-    guard case .failure(.malformed) = decode(#"{ "title": "No items key" }"#) else {
-        Issue.record("expected .malformed")
+@Test func bytesThatAreNotJSONNeverReachTheSchema() {
+    guard case .failure(.unreadable) = decode(#"{ "title": "#) else {
+        Issue.record("expected .unreadable")
         return
     }
 }

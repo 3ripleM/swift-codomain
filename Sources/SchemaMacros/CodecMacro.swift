@@ -29,7 +29,7 @@ public struct CodecMacro: MemberMacro, ExtensionMacro {
             "private init(_ value: \(raw: s.value)) { self.value = value }",
             """
             \(raw: s.access)static var schema: Schema<\(raw: s.input), \(raw: output), \(raw: s.failure)> {
-                Schema { codec.decode.run($0).map { \(raw: wrap) } }
+                codec.decode.map { \(raw: wrap) }
             }
             """,
             "\(raw: s.access)var encoded: \(raw: s.input) { Self.codec.encode(value) }",
@@ -50,13 +50,16 @@ public struct CodecMacro: MemberMacro, ExtensionMacro {
     }
 
     private static func signature(
-        _ node: AttributeSyntax, _ declaration: some DeclGroupSyntax, _ context: (any MacroExpansionContext)?
+        _ node: AttributeSyntax, _ declaration: some DeclGroupSyntax,
+        _ context: (any MacroExpansionContext)?
     ) -> Signature? {
         func fail(_ at: some SyntaxProtocol, _ message: String) -> Signature? {
             context?.diagnose(Diagnostic(node: at, message: Message(message)))
             return nil
         }
-        guard declaration.is(StructDeclSyntax.self) else { return fail(node, "@Codec applies to structs only") }
+        guard declaration.is(StructDeclSyntax.self) else {
+            return fail(node, "@Codec applies to structs only")
+        }
 
         let statics = declaration.memberBlock.members
             .compactMap { $0.decl.as(VariableDeclSyntax.self) }
@@ -69,14 +72,16 @@ public struct CodecMacro: MemberMacro, ExtensionMacro {
             return fail(node, "@Codec needs 'static let codec: Codec<Input, Value, Failure>'")
         }
         guard let type = codec.typeAnnotation?.type.as(IdentifierTypeSyntax.self),
-              type.name.text == "Codec",
-              let args = type.genericArgumentClause?.arguments.map({ TypeSyntax($0.argument) }),
-              args.count == 3 else {
+            type.name.text == "Codec",
+            let args = type.genericArgumentClause?.arguments.map({ TypeSyntax($0.argument) }),
+            args.count == 3
+        else {
             return fail(codec, "'codec' needs an explicit type: Codec<Input, Value, Failure>")
         }
 
         let value = SchemaMacro.optionalWrapped(args[1])
-        let access = declaration.modifiers.first { ["public", "package"].contains($0.name.text) }
+        let access =
+            declaration.modifiers.first { ["public", "package"].contains($0.name.text) }
             .map { $0.name.text + " " } ?? ""
         return Signature(
             input: args[0].trimmedDescription,

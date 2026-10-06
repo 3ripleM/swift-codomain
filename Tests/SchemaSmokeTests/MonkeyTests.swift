@@ -24,7 +24,7 @@ struct SplitMix64: RandomNumberGenerator {
 struct Monkey {
     var rng: SplitMix64
     let errorRate: Double
-    var injected: [Issues<TodoFailure>.Issue] = []
+    var injected: [Issues<DecodeProblem<TodoFailure>>.Issue] = []
 
     init(seed: UInt64, errorRate: Double) {
         rng = SplitMix64(state: seed)
@@ -39,7 +39,7 @@ struct Monkey {
     mutating func value<T>(_ path: String, _ good: T, _ bad: [(T, TodoFailure)]) -> T {
         guard chance(errorRate) else { return good }
         let (value, failure) = pick(bad)
-        injected.append(.init(path: path, failure: failure))
+        injected.append(.init(path: path, failure: .rule(failure)))
         return value
     }
 
@@ -50,22 +50,35 @@ struct Monkey {
 
     mutating func title(_ path: String) -> String {
         let word = pick(["Milk", "Café", "日本語のタスク", "👩‍👩‍👧 family", "שלום", "e\u{301}clair", "🏳️‍🌈"])
-        return value(path, padded(word), [("   ", .blank), ("\u{00A0}\n", .blank), (String(repeating: "x", count: 121), .tooLong)])
+        return value(
+            path, padded(word),
+            [
+                ("   ", .blank), ("\u{00A0}\n", .blank),
+                (String(repeating: "x", count: 121), .tooLong),
+            ])
     }
 
     mutating func slug(_ path: String) -> String {
-        value(path, pick(["a", " Weekend-Plans ", "x-1-y", "TODO-2026"]),
-              [("has space", .notASlug), ("week\u{200B}end", .notASlug), ("-lead", .notASlug), ("İstanbul", .notASlug)])
+        value(
+            path, pick(["a", " Weekend-Plans ", "x-1-y", "TODO-2026"]),
+            [
+                ("has space", .notASlug), ("week\u{200B}end", .notASlug), ("-lead", .notASlug),
+                ("İstanbul", .notASlug),
+            ])
     }
 
     mutating func instant(_ path: String) -> String {
-        let date = Date(timeIntervalSince1970: Double(Int.random(in: 0...4_000_000_000, using: &rng)))
-        return value(path, date.formatted(.iso8601), [("tomorrow", .notADate), ("2026-13-45", .notADate)])
+        let date = Date(
+            timeIntervalSince1970: Double(Int.random(in: 0...4_000_000_000, using: &rng)))
+        return value(
+            path, date.formatted(.iso8601), [("tomorrow", .notADate), ("2026-13-45", .notADate)])
     }
 
     mutating func member(_ path: String) -> Member.Input {
         Member.Input(
-            email: value("\(path).email", pick([" Ada@Example.com ", "bob@x.io"]), [("nope", .notAnEmail), ("a@b", .notAnEmail)]),
+            email: value(
+                "\(path).email", pick([" Ada@Example.com ", "bob@x.io"]),
+                [("nope", .notAnEmail), ("a@b", .notAnEmail)]),
             name: title("\(path).name")
         )
     }
@@ -74,16 +87,24 @@ struct Monkey {
         Todo.Input(
             title: title("\(path).title"),
             done: chance(0.5),
-            priority: value("\(path).priority", pick(["low", "MEDIUM", " High "]), [("urgent", .unknownPriority)]),
+            priority: value(
+                "\(path).priority", pick(["low", "MEDIUM", " High "]),
+                [("urgent", .unknownPriority)]),
             due: chance(0.5) ? instant("\(path).due") : nil,
-            note: chance(0.5) ? value("\(path).note", pick(["  ", "sourdough", "📝"]), [(String(repeating: "n", count: 501), .tooLong)]) : nil,
+            note: chance(0.5)
+                ? value(
+                    "\(path).note", pick(["  ", "sourdough", "📝"]),
+                    [(String(repeating: "n", count: 501), .tooLong)]) : nil,
             tags: (0..<upTo(3)).map { slug("\(path).tags[\($0)]") },
             reminder: chance(0.3)
                 ? Reminder.Input(
                     at: instant("\(path).reminder.at"),
-                    repeats: value("\(path).reminder.repeats", pick(["never", "Daily", "WEEKLY"]), [("hourly", .unknownRepeat)]))
+                    repeats: value(
+                        "\(path).reminder.repeats", pick(["never", "Daily", "WEEKLY"]),
+                        [("hourly", .unknownRepeat)]))
                 : nil,
-            subtasks: depth < 3 ? (0..<upTo(3)).map { todo("\(path).subtasks[\($0)]", depth: depth + 1) } : []
+            subtasks: depth < 3
+                ? (0..<upTo(3)).map { todo("\(path).subtasks[\($0)]", depth: depth + 1) } : []
         )
     }
 
@@ -94,11 +115,17 @@ struct Monkey {
             owner: member("owner"),
             sharedWith: (0..<upTo(3)).map { member("sharedWith[\($0)]") },
             settings: Settings.Input(
-                sort: value("settings.sort", pick(["manual", "Due", "PRIORITY"]), [("random", .unknownSort)]),
+                sort: value(
+                    "settings.sort", pick(["manual", "Due", "PRIORITY"]), [("random", .unknownSort)]
+                ),
                 reminderDefault: chance(0.5)
-                    ? value("settings.reminderDefault", Int.random(in: 1...10_000, using: &rng), [(0, .notPositive), (-5, .notPositive)])
+                    ? value(
+                        "settings.reminderDefault", Int.random(in: 1...10_000, using: &rng),
+                        [(0, .notPositive), (-5, .notPositive)])
                     : nil,
-                timezone: value("settings.timezone", pick(TimeZone.knownTimeZoneIdentifiers), [("Mars/Olympus", .notATimeZone)])
+                timezone: value(
+                    "settings.timezone", pick(TimeZone.knownTimeZoneIdentifiers),
+                    [("Mars/Olympus", .notATimeZone)])
             ),
             items: (0..<upTo(6)).map { todo("items[\($0)]", depth: 0) }
         )
@@ -113,7 +140,9 @@ private func bytes(_ input: TodoList.Input) throws -> Data {
     return try encoder.encode(input)
 }
 
-private func issues(_ result: Result<TodoList, JSONFailure<TodoFailure>>) -> Issues<TodoFailure>? {
+private func issues(_ result: Result<TodoList, DecodeFailure<TodoFailure>>) -> Issues<
+    DecodeProblem<TodoFailure>
+>? {
     if case .failure(.invalid(let issues)) = result { issues } else { nil }
 }
 
@@ -121,7 +150,9 @@ private func failure<T>(_ result: Result<T, TodoFailure>) -> TodoFailure? {
     if case .failure(let failure) = result { failure } else { nil }
 }
 
-private func task(_ title: String = "t", due: String? = nil, subtasks: [Todo.Input] = []) -> Todo.Input {
+private func task(_ title: String = "t", due: String? = nil, subtasks: [Todo.Input] = [])
+    -> Todo.Input
+{
     Todo.Input(title: title, done: false, priority: "low", due: due, tags: [], subtasks: subtasks)
 }
 
@@ -162,17 +193,22 @@ private func list(_ items: [Todo.Input]) -> TodoList.Input {
     for _ in 1..<50 { node = task(subtasks: [node]) }
     let path = "items[0]" + String(repeating: ".subtasks[0]", count: 49) + ".due"
 
-    #expect(issues(TodoList.decode(json: try bytes(list([node])))) == Issues([.init(path: path, failure: .notADate)]))
+    #expect(
+        issues(TodoList.decode(json: try bytes(list([node]))))
+            == Issues([.init(path: path, failure: .rule(.notADate))]))
 }
 
 /// Foundation's JSONDecoder refuses nesting past 512 levels (each todo level is 2: `{` and `[`),
-/// so a depth bomb is `.malformed` before `parse` ever recurses.
+/// so a depth bomb is `.unreadable` before the schema ever recurses.
 @Test(arguments: [300, 5_000, 100_000])
-func depthBombIsMalformedNotACrash(levels: Int) {
+func depthBombIsNotJSONNotACrash(levels: Int) {
     let open = #"{"title":"t","done":false,"priority":"low","tags":[],"subtasks":["#
-    let nested = String(repeating: open, count: levels - 1) + validItem + String(repeating: "]}", count: levels - 1)
-    guard case .failure(.malformed) = TodoList.decode(json: Data(doc(items: "[" + nested + "]").utf8)) else {
-        Issue.record("expected .malformed at \(levels) levels")
+    let nested =
+        String(repeating: open, count: levels - 1) + validItem
+        + String(repeating: "]}", count: levels - 1)
+    guard case .failure(.unreadable) = TodoList.decode(json: Data(doc(items: "[" + nested + "]").utf8))
+    else {
+        Issue.record("expected .unreadable at \(levels) levels")
         return
     }
 }
@@ -180,7 +216,10 @@ func depthBombIsMalformedNotACrash(levels: Int) {
 @Test func tenThousandBrokenItemsGiveTenThousandOrderedIssues() throws {
     let result = TodoList.decode(json: try bytes(list((0..<10_000).map { _ in task("  ") })))
 
-    #expect(issues(result) == Issues((0..<10_000).map { .init(path: "items[\($0)].title", failure: .blank) }))
+    #expect(
+        issues(result)
+            == Issues(
+                (0..<10_000).map { .init(path: "items[\($0)].title", failure: .rule(.blank)) }))
 }
 
 // MARK: - 3. Unicode
@@ -212,45 +251,72 @@ func depthBombIsMalformedNotACrash(levels: Int) {
 // MARK: - 4. Hostile JSON
 
 private let validItem = #"{"title":"t","done":false,"priority":"low","tags":[],"subtasks":[]}"#
-private func doc(items: String = "[]", settings: String = #"{"sort":"manual","timezone":"UTC"}"#, title: String = #""L""#) -> String {
+private func doc(
+    items: String = "[]", settings: String = #"{"sort":"manual","timezone":"UTC"}"#,
+    title: String = #""L""#
+) -> String {
     #"{"title":\#(title),"slug":"l","owner":{"email":"a@b.co","name":"A"},"sharedWith":[],"settings":\#(settings),"items":\#(items)}"#
 }
 
+/// `unreadable` when the bytes aren't JSON; otherwise every problem, as `Issues.description`.
 @Test(arguments: [
-    "",
-    "null",
-    "[]",
-    #"{"title":"#,
-    doc(title: "42"),
-    doc(title: "null"),
-    doc(items: "{}"),
-    doc(items: #"[{"title":"t","done":"true","priority":"low","tags":[],"subtasks":[]}]"#),
-    doc(settings: #"{"sort":"manual","reminderDefault":1e30,"timezone":"UTC"}"#),
-    doc(settings: #"{"sort":"manual","reminderDefault":9223372036854775808,"timezone":"UTC"}"#),
-    doc(settings: #"{"sort":"manual","reminderDefault":1.5,"timezone":"UTC"}"#),
-    #"{"title":"L"}"#,
+    ("", "unreadable"),
+    (#"{"title":"#, "unreadable"),
+    ("null", #": wrongType(expected: "object")"#),
+    ("[]", #": wrongType(expected: "object")"#),
+    (doc(title: "42"), #"title: wrongType(expected: "String")"#),
+    (doc(title: "null"), "title: missing"),
+    (doc(items: "{}"), #"items: wrongType(expected: "array")"#),
+    (
+        doc(items: #"[{"title":"t","done":"true","priority":"low","tags":[],"subtasks":[]}]"#),
+        #"items[0].done: wrongType(expected: "Bool")"#
+    ),
+    (
+        doc(settings: #"{"sort":"manual","reminderDefault":1e30,"timezone":"UTC"}"#),
+        #"settings.reminderDefault: wrongType(expected: "Int")"#
+    ),
+    (
+        doc(settings: #"{"sort":"manual","reminderDefault":9223372036854775808,"timezone":"UTC"}"#),
+        #"settings.reminderDefault: wrongType(expected: "Int")"#
+    ),
+    (
+        doc(settings: #"{"sort":"manual","reminderDefault":1.5,"timezone":"UTC"}"#),
+        #"settings.reminderDefault: wrongType(expected: "Int")"#
+    ),
+    (
+        #"{"title":"L"}"#,
+        "slug: missing, owner: missing, sharedWith: missing, settings: missing, items: missing"
+    ),
 ])
-func wrongShapeIsMalformedNeverACrash(json: String) {
-    guard case .failure(.malformed) = TodoList.decode(json: Data(json.utf8)) else {
-        Issue.record("expected .malformed")
-        return
+func hostileJSONIsReportedNeverACrash(json: String, expected: String) {
+    switch TodoList.decode(json: Data(json.utf8)) {
+    case .failure(.unreadable): #expect(expected == "unreadable")
+    case .failure(.invalid(let issues)): #expect("\(issues)" == expected)
+    case .success: Issue.record("expected a failure")
     }
 }
 
 @Test func harmlessOddJSONStillParses() throws {
-    let extra = doc(items: #"[{"title":"t","done":false,"priority":"low","tags":[],"subtasks":[],"$where":{"admin":true}}]"#)
+    let extra = doc(
+        items:
+            #"[{"title":"t","done":false,"priority":"low","tags":[],"subtasks":[],"$where":{"admin":true}}]"#
+    )
     #expect(try TodoList.decode(json: Data(extra.utf8)).get().items.count == 1)  // unknown keys ignored
 
-    let explicitNull = doc(items: #"[{"title":"t","done":false,"priority":"low","due":null,"tags":[],"subtasks":[]}]"#)
+    let explicitNull = doc(
+        items: #"[{"title":"t","done":false,"priority":"low","due":null,"tags":[],"subtasks":[]}]"#)
     #expect(try TodoList.decode(json: Data(explicitNull.utf8)).get().items[0].due == nil)
 
     let huge = doc(title: "\"" + String(repeating: "x", count: 1_000_000) + "\"")
-    #expect(issues(TodoList.decode(json: Data(huge.utf8))) == Issues([.init(path: "title", failure: .tooLong)]))
+    #expect(
+        issues(TodoList.decode(json: Data(huge.utf8)))
+            == Issues([.init(path: "title", failure: .rule(.tooLong))]))
 }
 
 /// Foundation's JSONDecoder keeps the first value of a duplicated key. Pinned so a Foundation change is noticed.
 @Test func duplicateKeysKeepTheFirstValue() throws {
-    let json = #"{"title":"Kept","title":"   ","slug":"l","owner":{"email":"a@b.co","name":"A"},"sharedWith":[],"settings":{"sort":"manual","timezone":"UTC"},"items":[]}"#
+    let json =
+        #"{"title":"Kept","title":"   ","slug":"l","owner":{"email":"a@b.co","name":"A"},"sharedWith":[],"settings":{"sort":"manual","timezone":"UTC"},"items":[]}"#
     #expect(try TodoList.decode(json: Data(json.utf8)).get().title.value == "Kept")
 }
 
@@ -274,7 +340,8 @@ func wrongShapeIsMalformedNeverACrash(json: String) {
 
     var a = Monkey(seed: 42, errorRate: 0.2)
     var b = Monkey(seed: 42, errorRate: 0.2)
-    let bytesA = try bytes(a.list()), bytesB = try bytes(b.list())
+    let bytesA = try bytes(a.list())
+    let bytesB = try bytes(b.list())
     #expect(bytesA == bytesB)
     #expect(a.injected.map(\.path) == b.injected.map(\.path))
 }

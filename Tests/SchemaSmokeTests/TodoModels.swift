@@ -12,9 +12,13 @@ enum TodoFailure: Error, Equatable {
 private let text = Schema<String, String, TodoFailure>.identity
 
 /// Case-insensitive `String` → enum.
-private func oneOf<E: RawRepresentable & Sendable>(_ failure: TodoFailure) -> Codec<String, E, TodoFailure>
+private func oneOf<E: RawRepresentable & Sendable>(_ failure: TodoFailure) -> Codec<
+    String, E, TodoFailure
+>
 where E.RawValue == String {
-    Codec(decode: text.trimmed().compactMap(failure) { E(rawValue: $0.lowercased()) }, encode: { $0.rawValue })
+    Codec(
+        decode: text.trimmed().compactMap(failure) { E(rawValue: $0.lowercased()) },
+        encode: { $0.rawValue })
 }
 
 // MARK: - Field types
@@ -31,7 +35,9 @@ struct Title: Hashable {
 @Codec
 struct Slug: Hashable {
     static let codec: Codec<String, String, TodoFailure> = Codec(
-        decode: .identity.trimmed().map { $0.lowercased() }.matches("^[a-z0-9]+(-[a-z0-9]+)*$", .notASlug),
+        decode: .identity.trimmed().lowercased().refine(.notASlug) {
+            $0.wholeMatch(of: #/[a-z0-9]+(-[a-z0-9]+)*/#) != nil
+        },
         encode: { $0 }
     )
 }
@@ -39,7 +45,7 @@ struct Slug: Hashable {
 @Codec
 struct Email: Hashable {
     static let codec: Codec<String, String, TodoFailure> = Codec(
-        decode: .identity.trimmed().map { $0.lowercased() }.matches(#"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, .notAnEmail),
+        decode: .identity.trimmed().lowercased().email(.notAnEmail),
         encode: { $0 }
     )
 }
@@ -61,7 +67,7 @@ struct Flag {
 @Codec
 struct Minutes {
     static let codec: Codec<Int, Int, TodoFailure> = Codec(
-        decode: .identity.check(.notPositive) { $0 > 0 },
+        decode: .identity.refine(.notPositive) { $0 > 0 },
         encode: { $0 }
     )
 }

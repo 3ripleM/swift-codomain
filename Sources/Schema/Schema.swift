@@ -2,23 +2,74 @@ import Foundation
 
 /// Turns a raw `Input` into a typed `Output`. Never throws: the outcome is a `Result`.
 public struct Schema<Input, Output, Failure: Error>: Sendable {
-    public let run: @Sendable (Input) -> Result<Output, Failure>
+    /// Every failure, in order; never empty on failure. More than one only after `collect`.
+    let runAll: @Sendable (Input) -> Result<Output, FailureList<Failure>>
 
-    public init(run: @escaping @Sendable (Input) -> Result<Output, Failure>) { self.run = run }
+    public init(run: @escaping @Sendable (Input) -> Result<Output, Failure>) {
+        runAll = { run($0).mapError { FailureList(all: [$0]) } }
+    }
+
+    private init(
+        all runAll: @escaping @Sendable (Input) -> Result<Output, FailureList<Failure>>, _: Void
+    ) { self.runAll = runAll }
+
+    static func all(_ runAll: @escaping @Sendable (Input) -> Result<Output, FailureList<Failure>>)
+        -> Schema
+    {
+        Schema(all: runAll, ())
+    }
+
+    /// The first failure only; `parse` and `decode(json:)` report all of them.
+    public func run(_ input: Input) -> Result<Output, Failure> {
+        runAll(input).mapError { $0.all[0] }
+    }
 
     public func map<T>(_ transform: @escaping @Sendable (Output) -> T) -> Schema<Input, T, Failure> {
-        Schema<Input, T, Failure> { run($0).map(transform) }
+        .all { runAll($0).map(transform) }
     }
 
     /// Converts and validates in one step: `nil` → `failure`. E.g. `.compactMap(.notANumber) { Double($0) }`.
-    public func compactMap<T>(_ failure: Failure, _ transform: @escaping @Sendable (Output) -> T?) -> Schema<Input, T, Failure> {
-        Schema<Input, T, Failure> { raw in run(raw).flatMap { transform($0).map { .success($0) } ?? .failure(failure) } }
+    public func compactMap<T>(_ failure: Failure, _ transform: @escaping @Sendable (Output) -> T?)
+        -> Schema<Input, T, Failure>
+    {
+        .all { raw in
+            runAll(raw).flatMap {
+                transform($0).map { .success($0) } ?? .failure(FailureList(all: [failure]))
+            }
+        }
     }
 
     /// Fails with `failure` when `isValid` returns false.
-    public func check(_ failure: Failure, _ isValid: @escaping @Sendable (Output) -> Bool) -> Schema {
-        Schema { raw in run(raw).flatMap { isValid($0) ? .success($0) : .failure(failure) } }
+    public func refine(_ failure: Failure, _ isValid: @escaping @Sendable (Output) -> Bool) -> Schema {
+        compactMap(failure) { isValid($0) ? $0 : nil }
     }
+
+    /// Runs every check on the same value and keeps every failure. When all pass, the output is the
+    /// last check's output, so put transforms before `collect` unless the last check makes them.
+    /// E.g. `.collect({ $0.min(8, .tooShort) }, { $0.refine(.noDigit) { $0.contains(where: \.isNumber) } })`.
+    public func collect(
+        _ checks: (Schema<Output, Output, Failure>) -> Schema<Output, Output, Failure>...
+    ) -> Schema where Output: Sendable {
+        let built = checks.map { $0(.all { .success($0) }) }
+        return .all { raw in
+            runAll(raw).flatMap { value in
+                var output = value
+                var failures: [Failure] = []
+                for check in built {
+                    switch check.runAll(value) {
+                    case .success(let checked): output = checked
+                    case .failure(let failed): failures += failed.all
+                    }
+                }
+                return failures.isEmpty ? .success(output) : .failure(FailureList(all: failures))
+            }
+        }
+    }
+}
+
+/// Every failure of one run, in order; never empty.
+struct FailureList<F: Error>: Error {
+    let all: [F]
 }
 
 /// Both directions of a field, typed once: `decode` may fail, `encode` cannot.
@@ -36,39 +87,4 @@ public struct Codec<Input, Value, Failure: Error>: Sendable {
 extension Schema where Input == Output {
     /// Start of every chain.
     public static var identity: Schema { Schema { .success($0) } }
-}
-
-// MARK: - String steps
-
-extension Schema where Output == String {
-    public func trimmed() -> Schema { map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
-
-    /// Empty → `failure`.
-    public func nonEmpty(_ failure: Failure) -> Schema { check(failure) { !$0.isEmpty } }
-
-    /// Empty → absent. Use for fields where blank means "not provided".
-    public func nilIfEmpty() -> Schema<Input, String?, Failure> { map { $0.isEmpty ? nil : $0 } }
-}
-
-extension Schema where Output == String? {
-    /// Wraps a present value; absent stays absent.
-    public func map<T>(_ transform: @escaping @Sendable (String) -> T) -> Schema<Input, T?, Failure> {
-        Schema<Input, T?, Failure> { run($0).map { $0.map(transform) } }
-    }
-}
-
-// MARK: - Rules on a present string (absent passes through)
-
-public protocol StringValue: SendableMetatype { var stringValue: String? { get } }
-extension String: StringValue { public var stringValue: String? { self } }
-extension Optional: StringValue where Wrapped == String { public var stringValue: String? { self } }
-
-extension Schema where Output: StringValue {
-    public func max(_ length: Int, _ failure: Failure) -> Schema {
-        check(failure) { $0.stringValue.map { $0.count <= length } ?? true }
-    }
-
-    public func matches(_ pattern: String, _ failure: Failure) -> Schema {
-        check(failure) { $0.stringValue.map { $0.range(of: pattern, options: .regularExpression) != nil } ?? true }
-    }
 }

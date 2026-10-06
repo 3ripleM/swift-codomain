@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        run: xcrun swift-format lint --strict -r -p Sources Tests Package.swift
+      - name: Test (Swift 6 language mode)
+        run: swift test
+      - name: Test (Swift 5 language mode)
+        run: |
+          sed -i '' 's/\.v6/.v5/g' Package.swift
+          swift test

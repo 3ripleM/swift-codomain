@@ -16,13 +16,13 @@ import Testing
 }
 
 @Test func checkKeepsValidAndRejectsInvalid() {
-    let even = Text.identity.check(.odd) { $0.count % 2 == 0 }
+    let even = Text.identity.refine(.odd) { $0.count % 2 == 0 }
     #expect(even.run("ab") == .success("ab"))
     #expect(even.run("abc") == .failure(.odd))
 }
 
 @Test func chainStopsAtItsFirstFailure() {
-    let chain = Text.identity.check(.first) { _ in false }.check(.second) { _ in false }
+    let chain = Text.identity.refine(.first) { _ in false }.refine(.second) { _ in false }
     #expect(chain.run("x") == .failure(.first))
 }
 
@@ -52,10 +52,4 @@ import Testing
     #expect(Text.identity.max(2, .tooLong).run("abc") == .failure(.tooLong))
     #expect(Text.identity.max(1, .tooLong).run("👩‍👩‍👧") == .success("👩‍👩‍👧"))
     #expect(Text.identity.nilIfEmpty().max(1, .tooLong).run("") == .success(nil))
-}
-
-@Test func matchesSearchesUnlessThePatternIsAnchored() {
-    #expect(Text.identity.matches("[0-9]", .noMatch).run("ab1") == .success("ab1"))
-    #expect(Text.identity.matches("^[a-z]+$", .noMatch).run("ab1") == .failure(.noMatch))
-    #expect(Text.identity.nilIfEmpty().matches("^x$", .noMatch).run("") == .success(nil))
 }

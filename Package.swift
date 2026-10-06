@@ -9,7 +9,9 @@ let package = Package(
         .library(name: "Schema", targets: ["Schema"])
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0")
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0"),
+        // Tests only: checks `decode(_:using:)` with a non-JSON decoder.
+        .package(url: "https://github.com/CoreOffice/XMLCoder.git", from: "0.17.0"),
     ],
     targets: [
         .macro(
@@ -25,6 +27,9 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
             name: "SchemaTests", dependencies: ["Schema"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(
+            name: "SchemaXMLTests", dependencies: ["Schema", "XMLCoder"],
+            swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
             name: "SchemaMacrosTests",
             dependencies: [
