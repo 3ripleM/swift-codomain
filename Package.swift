@@ -6,10 +6,10 @@ let package = Package(
     name: "swift-schema",
     platforms: [.macOS(.v15), .iOS(.v17)],
     products: [
-        .library(name: "Schema", targets: ["Schema"]),
+        .library(name: "Schema", targets: ["Schema"])
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0"),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0")
     ],
     targets: [
         .macro(
@@ -20,7 +20,18 @@ let package = Package(
             ]
         ),
         .target(name: "Schema", dependencies: ["SchemaMacros"]),
-        .executableTarget(name: "Example", dependencies: ["Schema"], swiftSettings: [.swiftLanguageMode(.v6)]),
-        .testTarget(name: "SchemaSmokeTests", dependencies: ["Schema"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(
+            name: "SchemaSmokeTests", dependencies: ["Schema"],
+            swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(
+            name: "SchemaTests", dependencies: ["Schema"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(
+            name: "SchemaMacrosTests",
+            dependencies: [
+                "SchemaMacros",
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )

@@ -156,12 +156,25 @@ private func list(_ items: [Todo.Input]) -> TodoList.Input {
 
 // MARK: - 2. Extreme sizes
 
-@Test func threeHundredLevelsOfSubtasksReportTheBottomPath() throws {
+/// `parse` recurses once per level; 50 levels fits Swift Testing's 512 KB thread stack in debug builds.
+@Test func fiftyLevelsOfSubtasksReportTheBottomPath() throws {
     var node = task(due: "never")
-    for _ in 1..<300 { node = task(subtasks: [node]) }
-    let path = "items[0]" + String(repeating: ".subtasks[0]", count: 299) + ".due"
+    for _ in 1..<50 { node = task(subtasks: [node]) }
+    let path = "items[0]" + String(repeating: ".subtasks[0]", count: 49) + ".due"
 
     #expect(issues(TodoList.decode(json: try bytes(list([node])))) == Issues([.init(path: path, failure: .notADate)]))
+}
+
+/// Foundation's JSONDecoder refuses nesting past 512 levels (each todo level is 2: `{` and `[`),
+/// so a depth bomb is `.malformed` before `parse` ever recurses.
+@Test(arguments: [300, 5_000, 100_000])
+func depthBombIsMalformedNotACrash(levels: Int) {
+    let open = #"{"title":"t","done":false,"priority":"low","tags":[],"subtasks":["#
+    let nested = String(repeating: open, count: levels - 1) + validItem + String(repeating: "]}", count: levels - 1)
+    guard case .failure(.malformed) = TodoList.decode(json: Data(doc(items: "[" + nested + "]").utf8)) else {
+        Issue.record("expected .malformed at \(levels) levels")
+        return
+    }
 }
 
 @Test func tenThousandBrokenItemsGiveTenThousandOrderedIssues() throws {

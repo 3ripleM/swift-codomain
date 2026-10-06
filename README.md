@@ -1,170 +1,455 @@
 # swift-schema
 
-Parse, don't validate: turn raw input into typed values, with the rules declared once
-and mistakes caught by the compiler. Zod/io-ts-style, for Swift.
-
-Status: prototype.
-
-## Why (the need)
-
-Validating with `if` checks scattered across call sites has these problems:
-
-1. **Rules spread across modules:** one layer checks a trimmed value, another trims again
-   with its own helper.
-2. **Checked value ≠ stored value:** `" 42 "` is checked trimmed but sent untrimmed.
-3. **Checks can be skipped:** nothing stops calling `send()` without `validate()`.
-4. **Optionality via a runtime flag:** `requirement: .required/.optional` duplicates what
-   `String` vs `String?` already expresses.
-5. **No compile-time help:** a missing rule, a wrong field, or wrong optionality all
-   compile and pass silently.
-
-No maintained Swift package does this. GitHub searches for `zod swift`, `io-ts swift`,
-and `swift refined types` returned none. The closest packages are `pointfreeco/swift-tagged`
-(branded types, no rules) and `SvenTiigi/ValidatedPropertyKit` (property wrappers; the
-value stays a `String`).
-
-## Goals
-
-1. **Rules in one place:** each field type owns both directions, typed once (`Email.codec`).
-2. **Parsed types prove validity:** holding a `User` means every field passed its rule;
-   field types have a `private init`, so the schema is the only way in.
-3. **Errors as values, all at once:** `Result<User, Issues<Failure>>` lists every failure with its path
-   (`email: notAnEmail, address.city: emptyString, phones[1].number: notAPhoneNumber`); within one field the chain stops at its first failure.
-4. **Compiler errors, not runtime errors**, for developer mistakes (table below).
-5. **Least boilerplate:** the developer writes one struct per model and one declaration
-   per field type; input type, parsing, and encoding are generated.
-
-Non-goals: a `@Codec` value that is itself a `@Schema` struct (nest `@Schema` structs directly instead).
-
-## Usage
+**Parse, don't validate** for Swift. Declare each rule once, get typed values or every error at once,
+and let the compiler catch the mistakes. In the spirit of Zod and io-ts.
 
 ```swift
 import Schema
 
-// 1. A field type: `Codec<Input, Value, Failure>` holds `decode` (may fail) and `encode` (cannot fail).
-//    `@Codec` generates `let value`, a `private init`, `schema`, `encoded`, and `Field`.
+enum TodoFailure: Error { case blank, tooLong }
+
 @Codec
-struct Email: Hashable {
-    static let codec: Codec<String, String, BasicFailure> = Codec(
-        decode: .identity
-            .trimmed()
-            .map { $0.lowercased() }
-            .matches(#"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, .notAnEmail),
+struct Title {
+    static let codec: Codec<String, String, TodoFailure> = Codec(
+        decode: .identity.trimmed().nonEmpty(.blank).max(120, .tooLong),
+        encode: { $0 }
+    )
+}
+
+@JSONSchema(failure: TodoFailure.self)
+struct Todo {
+    let title: Title
+}
+
+let todo = try Todo.decode(json: Data(#"{ "title": "  Buy milk " }"#.utf8)).get()
+todo.title.value  // "Buy milk"
+```
+
+## About
+
+Most input handling checks a `String` with a few `if`s and passes the same `String` along. Nothing
+records that the check happened, so the next layer checks again or forgets to.
+
+swift-schema **parses** instead. A rule turns raw input into a new type, such as `Title`, and the
+only way to get a `Title` is through its rule. If a function takes a `Title`, the check has already happened.
+
+## Features
+
+- **One place per rule:** a field type owns its decode and encode, typed once.
+- **Every error, with its path:** one parse reports `title: blank, items[1].due: notADate`.
+- **Compile-time safety:** a field without a rule, a wrong optionality, or a mistyped encoder fails to
+  compile (see [Compile-time guarantees](#compile-time-guarantees)).
+- **Little boilerplate:** write the parsed struct; the raw `Input` struct, parsing, and encoding are generated.
+- **Nesting:** structs inside structs, arrays, optionals, and recursive trees.
+- **JSON in, JSON out:** `decode(json:)` and `json()` for `@JSONSchema` types.
+
+## What is "parse, don't validate"?
+
+Validating keeps the raw type:
+
+```swift
+func save(title: String) {
+    guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }  // trimmed here…
+    database.insert(title)                                                     // …stored untrimmed
+}
+```
+
+Parsing returns a new type that can only hold valid values:
+
+```swift
+func save(title: Title) {          // a Title is always trimmed, non-empty, at most 120 characters
+    database.insert(title.value)
+}
+
+switch Title.mk("  Buy milk ") {   // the only way to get a Title
+case .success(let title): save(title: title)
+case .failure(let failure): print(failure)  // .blank or .tooLong
+}
+```
+
+## Installation
+
+Swift 6.0 tools or later; macOS 15 / iOS 17.
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "[REF NEEDED: repository URL]", branch: "main"),
+],
+targets: [
+    .target(name: "App", dependencies: [.product(name: "Schema", package: "swift-schema")]),
+]
+```
+
+`@Codec`, `@Schema` and `@JSONSchema` are Swift macros: Xcode asks you to trust the macro once.
+
+# Documentation
+
+- [Getting Started](#getting-started)
+- [API Reference](#api-reference)
+- [Compile-time guarantees](#compile-time-guarantees)
+- [Limitations](#limitations)
+- [Development](#development)
+
+## Getting Started
+
+We build a todo list that arrives as JSON.
+
+### 1. Name your failures
+
+One enum lists everything that can be wrong with a value:
+
+```swift
+import Foundation
+import Schema
+
+enum TodoFailure: Error, Equatable {
+    case blank, tooLong, notAnEmail, notADate
+}
+```
+
+### 2. Write field types
+
+A field type is a struct with `@Codec` and one `codec`: how to read the raw value (`decode`, may fail)
+and how to write it back (`encode`, cannot fail). The type `Codec<Input, Value, Failure>` is written once
+and both directions are checked against it.
+
+```swift
+@Codec
+struct Title {
+    static let codec: Codec<String, String, TodoFailure> = Codec(
+        decode: .identity.trimmed().nonEmpty(.blank).max(120, .tooLong),
         encode: { $0 }
     )
 }
 
 @Codec
-struct DateFromString {
-    static let codec: Codec<String, Date, BasicFailure> = Codec(
-        decode: string.compactMap(.notADate) { try? Date($0, strategy: .iso8601) },
+struct Email {
+    static let codec: Codec<String, String, TodoFailure> = Codec(
+        decode: .identity.trimmed().map { $0.lowercased() }.matches(#"^[^@\s]+@[^@\s]+$"#, .notAnEmail),
+        encode: { $0 }
+    )
+}
+```
+
+When input and value types differ (`String` → `Date`), start from a typed `identity`:
+
+```swift
+let text = Schema<String, String, TodoFailure>.identity
+
+@Codec
+struct DueDate {
+    static let codec: Codec<String, Date, TodoFailure> = Codec(
+        decode: text.trimmed().compactMap(.notADate) { try? Date($0, strategy: .iso8601) },
         encode: { $0.formatted(.iso8601) }
     )
 }
-
-// 2. A model: write the parsed struct only.
-@Schema(failure: BasicFailure.self)
-struct User {
-    let email: Email                     // Input.email: String
-    let birthday: DateFromString?        // Input.birthday: String? = nil
-}
-
-Email.mk(" Ada@Example.com ")                   // Result<Email, BasicFailure>
-Email.unsafeMk("ada@example.com")               // Email; traps if the rule fails (literals, tests)
-
-User.parse(.init(email: " Ada@Example.com "))   // decode: Result<User, Issues<BasicFailure>>
-user.encode()                                   // encode: User.Input (normalized raw values)
 ```
 
-`@Schema` generates `struct Input`, `init(parsing:) throws(Issues<Failure>)`,
-`static func parse(_:) -> Result<Self, Issues<Failure>>` and `func encode() -> Input`. Every field is
-parsed before `Self` is built, so one call reports every failure.
-
-Properties can be `@Codec` fields, other `@Schema` structs, arrays of either, or optionals of those
-(`let address: Address?`, `let phones: [Phone]`). Nested failures get a path:
-`address.country: notACountryCode`, `phones[1].kind: unknownPhoneKind`.
-Optional properties become optional inputs defaulting to `nil`.
-
-For JSON, write `@JSONSchema(failure:)` instead: same expansion, plus `Input: Codable` and
-`JSONParsable`:
+A rule can also decide that a value is absent. Here a blank note counts as no note:
 
 ```swift
-switch TodoList.decode(json: data) {          // Result<TodoList, JSONFailure<TodoFailure>>
-case .success(let list): let bytes = try list.json()  // sorted keys; throws(EncodingError)
-case .failure(.malformed(let error)): ...     // DecodingError: wrong shape, missing key
-case .failure(.invalid(let issues)): ...      // Issues<TodoFailure>: every rule failure
+@Codec
+struct Note {
+    static let codec: Codec<String, String?, TodoFailure> = Codec(
+        decode: text.trimmed().nilIfEmpty().max(500, .tooLong),
+        encode: { $0 ?? "" }
+    )
 }
 ```
 
-Every property's `Input` must be `Codable`, so a plain `@Schema` struct inside a `@JSONSchema`
-struct is a compile error.
+Each field type gets `let value`, a `private init`, `mk`, `unsafeMk`, and `encoded`.
 
-`@Codec` reads the `codec` annotation `Codec<I, V, F>`: `decode: Schema<I, V, F>` and `encode: (V) -> I`
-are both checked against it, so the types are written once and `encode` cannot fail. Law: `decode(encode(v)) == v`; the reverse does not
-hold for normalizing decoders (`" Ada@X.io "` encodes as `"ada@x.io"`). An optional `V`
-(e.g. `Codec<String, String?, F>` with `nilIfEmpty()`) generates `OptionalField` instead of `Field`.
-`.identity` only infers when both types match; otherwise start `decode` from a typed helper
-(`let string = Schema<String, String, F>.identity`).
+### 3. Write models
 
-## Example: client and backend
+Write the struct you want to use. Properties can be field types, other models, arrays, and optionals:
 
-`swift run Example` runs a small user registry (`Sources/Example/`):
+```swift
+@JSONSchema(failure: TodoFailure.self)
+struct Member {
+    let email: Email
+    let name: Title
+}
 
-- `Client.registerUser(...)`: raw input → `User.parse` → `user.encode()` → JSON → `Backend`.
-- `Client.getUser(email:)`: `Backend` JSON → `User.Input` → `User.parse`. Stored data is
-  untrusted too: a record that breaks a rule is refused.
-- `Backend`: mocked database; stores JSON bodies in an array, unique by email.
+@JSONSchema(failure: TodoFailure.self)
+struct Todo {
+    let title: Title
+    let due: DueDate?     // key may be missing
+    let note: Note?       // key may be missing, or blank
+    let subtasks: [Todo]  // recursion works
+}
 
-## Building blocks
+@JSONSchema(failure: TodoFailure.self)
+struct TodoList {
+    let title: Title
+    let owner: Member
+    let items: [Todo]
+}
+```
 
-| File | Purpose |
+The macro generates `TodoList.Input`, the raw shape (`title: String`, `owner: Member.Input`,
+`items: [Todo.Input]`), plus parsing and encoding.
+
+### 4. Decode
+
+```swift
+let json = """
+{
+  "title": "  Weekend ",
+  "owner": { "email": " Ada@Example.com ", "name": "Ada" },
+  "items": [
+    { "title": "Groceries", "due": "2026-10-10T17:00:00Z", "note": "  ", "subtasks": [] }
+  ]
+}
+"""
+
+switch TodoList.decode(json: Data(json.utf8)) {
+case .success(let list):
+    list.title.value          // "Weekend"
+    list.owner.email.value    // "ada@example.com"
+    list.items[0].note        // nil: blank became absent
+case .failure(.malformed(let error)):
+    print(error)              // DecodingError: not JSON, wrong type, missing key
+case .failure(.invalid(let issues)):
+    print(issues)             // every rule failure, see below
+}
+```
+
+### 5. Read every error
+
+Every field is parsed before the result is built, so one call reports every failure, each with its path:
+
+```swift
+let bad = """
+{
+  "title": " ",
+  "owner": { "email": "ada-at-example.com", "name": "Ada" },
+  "items": [
+    { "title": "Groceries", "subtasks": [] },
+    { "title": "Laundry", "due": "tomorrow", "subtasks": [] }
+  ]
+}
+"""
+
+if case .failure(.invalid(let issues)) = TodoList.decode(json: Data(bad.utf8)) {
+    print(issues)  // title: blank, owner.email: notAnEmail, items[1].due: notADate
+    issues.all     // [Issue(path: "title", failure: .blank), …]
+}
+```
+
+Within one field, the rule stops at its first failure.
+
+### 6. Encode
+
+`json()` writes the parsed values back, normalized, with sorted keys:
+
+```swift
+let list = try TodoList.decode(json: Data(json.utf8)).get()
+let data = try list.json()  // {"items":[{"due":"2026-10-10T17:00:00Z","subtasks":[],"title":"Groceries"}],"owner":{"email":"ada@example.com","name":"Ada"},"title":"Weekend"}
+```
+
+Decoding what you encoded gives the same value back.
+
+### 7. Without JSON
+
+Use `@Schema` when input does not come from JSON (forms, other models). You build the `Input` yourself:
+
+```swift
+@Schema(failure: TodoFailure.self)
+struct SignUp {
+    let email: Email
+    let name: Title
+}
+
+let result = SignUp.parse(SignUp.Input(email: " Ada@Example.com ", name: "Ada"))
+// Result<SignUp, Issues<TodoFailure>>
+```
+
+Single fields work the same way:
+
+```swift
+Email.mk("ada@example.com")       // Result<Email, TodoFailure>
+Email.unsafeMk("ada@example.com") // Email; crashes if the rule fails. For literals and tests.
+```
+
+## API Reference
+
+### `Schema`
+
+A rule from `Input` to `Output` that returns a `Result` and never throws. Build one by chaining steps
+from `identity`.
+
+#### Signature
+
+```swift
+struct Schema<Input, Output, Failure: Error> {
+    let run: (Input) -> Result<Output, Failure>
+}
+```
+
+#### Example
+
+```swift
+let title = Schema<String, String, TodoFailure>.identity.trimmed().nonEmpty(.blank)
+title.run("  a ")  // .success("a")
+title.run("   ")   // .failure(.blank)
+```
+
+### Steps
+
+| Step | Signature | Does |
+|---|---|---|
+| `identity` | `static var identity: Schema` (when `Input == Output`) | Passes the input through. Start of every chain. |
+| `map` | `map((Output) -> T)` | Transforms the value. Cannot fail. |
+| `compactMap` | `compactMap(Failure, (Output) -> T?)` | Transforms; `nil` becomes `Failure`. |
+| `check` | `check(Failure, (Output) -> Bool)` | Keeps the value when `true`, else `Failure`. |
+| `trimmed` | `trimmed()` | Strips whitespace and newlines from both ends (includes Unicode spaces). |
+| `nonEmpty` | `nonEmpty(Failure)` | Fails on `""`. Does not trim: put `trimmed()` first. |
+| `nilIfEmpty` | `nilIfEmpty()` | `""` becomes `nil`. Output becomes `String?`. |
+| `max` | `max(Int, Failure)` | At most N characters, as people see them (`"👩‍👩‍👧"` is 1). `nil` passes. |
+| `matches` | `matches(String, Failure)` | Regular expression search. Anchor with `^…$` to match the whole string. `nil` passes. |
+
+The first failing step wins; later steps don't run.
+
+### `@Codec`
+
+Turns a struct with a `codec` into a field type.
+
+#### Signature
+
+```swift
+@Codec
+struct Name {
+    static let codec: Codec<Input, Value, Failure> = Codec(
+        decode: Schema<Input, Value, Failure>,
+        encode: (Value) -> Input
+    )
+}
+```
+
+#### Generates
+
+- `let value: Value`
+- `private init`: only `codec.decode` creates values.
+- `static func mk(_: Input) -> Result<Name, Failure>`
+- `static func unsafeMk(_: Input) -> Name`: crashes with file and line if the rule fails.
+- `var encoded: Input`
+
+If `Value` is optional (`Codec<String, String?, F>`), `mk` returns `Result<Name?, Failure>`:
+the rule can decide the value is absent. Such a field can only be used as an optional property.
+
+Law: `mk(x.encoded)` gives back `x`. The reverse does not hold for normalizing rules:
+`" Ada@X.io "` encodes as `"ada@x.io"`.
+
+### `@Schema`
+
+Turns a struct into a model.
+
+#### Signature
+
+```swift
+@Schema(failure: Failure.self)
+struct Name { /* stored properties */ }
+```
+
+Every stored property needs a type annotation, and the type must be a field type, a model, an array of
+those, or an optional of those.
+
+#### Generates
+
+- `struct Input`: one property per stored property, using its `Input` type. Optional properties
+  become optional and default to `nil`.
+- `static func parse(_: Input) -> Result<Name, Issues<Failure>>`
+- `init(parsing: Input) throws(Issues<Failure>)`
+- `func encode() -> Input` and `var encoded: Input`
+
+### `@JSONSchema`
+
+`@Schema` plus JSON. Every property must be readable from JSON, so a plain `@Schema` model inside a
+`@JSONSchema` model fails to compile.
+
+#### Signature
+
+```swift
+@JSONSchema(failure: Failure.self)
+struct Name { /* stored properties */ }
+```
+
+#### Generates
+
+Everything `@Schema` generates, with `Input: Codable`, plus:
+
+- `static func decode(json: Data) -> Result<Name, JSONFailure<Failure>>`
+- `func json() throws(EncodingError) -> Data`: sorted keys. Throws for values JSON can't hold, such as `Double.nan`.
+
+### `Issues`
+
+Every failure from one parse, in property order.
+
+#### Signature
+
+```swift
+struct Issues<Failure: Error>: Error {
+    struct Issue { let path: String; let failure: Failure }
+    let all: [Issue]
+}
+```
+
+Paths join property names with `.` and array positions with `[i]`: `items[0].subtasks[1].title`.
+`print(issues)` gives `path: failure, path: failure`. `Issues` is `Equatable` when `Failure` is.
+
+### `JSONFailure`
+
+#### Signature
+
+```swift
+enum JSONFailure<Failure: Error>: Error {
+    case malformed(DecodingError)  // not JSON, wrong type, missing key
+    case invalid(Issues<Failure>)  // right shape, rules failed
+}
+```
+
+## Compile-time guarantees
+
+Each row was checked by introducing the mistake and building.
+
+| Mistake | Compiler says |
 |---|---|
-| `Sources/Schema/Schema.swift` | `Schema<Input, Output, Failure>` chain and `Codec<Input, Value, Failure>`: `identity`, `map`, `compactMap`, `check`, `trimmed`, `nonEmpty`, `nilIfEmpty`, `max`, `matches` |
-| `Sources/Schema/Field.swift` | `Parsable` (anything `@Schema` can hold; `[T]` is `Parsable` when `T` is), `Field` (schema always yields a value) and `OptionalField` (schema may yield absent), each with `mk`, `unsafeMk` and `encoded` |
-| `Sources/Schema/SchemaMacro.swift` | `@Schema`, `@JSONSchema` and `@Codec` macro declarations |
-| `Sources/Schema/JSON.swift` | `JSONParsable` (`decode(json:)`, `json()`) and `JSONFailure` (`.malformed` / `.invalid`) |
-| `Sources/Schema/Issues.swift` | `Issues<Failure>`: every failure as `(path, failure)`, in declaration order; `IssueCollector` used by generated code |
-| `Sources/SchemaMacros/SchemaMacro.swift` | `@Schema`/`@JSONSchema`: emits `Input` (`T.Input` / `T.Input?` per property; `Codable` for `@JSONSchema`), `init(parsing:)`, `parse`, `encode` |
-| `Sources/SchemaMacros/CodecMacro.swift` | Emits `value`, `private init`, `schema` (from `codec.decode`), `encoded` (from `codec.encode`), and `Field`/`OptionalField` conformance |
-| `Sources/Example/Basics.swift` | Field types: `Email`, `NonEmptyString`, `NonEmptyArray`, `PositiveNumber`, `NumberFromString`, `DateFromString` |
-| `Tests/SchemaSmokeTests/` | Smoke tests on a `@JSONSchema` todo-list domain: JSON fixtures, normalization, full-tree round trip, deep issue paths |
-| `Sources/Example/Client.swift`, `Contact.swift`, `Backend.swift`, `main.swift` | The client/backend example above; `Contact.swift` holds the nested `Address` and `Phone` |
+| Property type has no rule (`String`, `Int`) | `'Input' is not a member type of …` |
+| Field that can be absent, used as required | `requires that '…' conform to 'Parsable'` |
+| Array of a type without a rule (`[String]`) | `requires that 'String' conform to 'Parsable'` |
+| Property without a type annotation | `@Schema needs an explicit type on '…'` |
+| `@Schema` model inside a `@JSONSchema` model | `'….Input' does not conform to protocol 'Decodable'` |
+| Creating a field type without its rule (`Title("")`) | `initializer is inaccessible due to 'private' protection level` |
+| `@Codec` without `codec` | `@Codec needs 'static let codec: Codec<Input, Value, Failure>'` |
+| `codec` without a type annotation | `'codec' needs an explicit type: Codec<Input, Value, Failure>` |
+| `encode` returning the wrong type | `cannot convert value of type …` |
+| Hand-written `let value` next to `@Codec` | `invalid redeclaration of 'value'` |
 
-## Compile-time guarantees (verified by mutation tests)
+## Limitations
 
-| Developer mistake | Result |
-|---|---|
-| Property type has no schema (`String?`, `Int`) | ❌ `'Input' is not a member type of …` |
-| `nilIfEmpty` field declared required | ❌ `requires that 'Nickname' conform to 'Parsable'` |
-| Array of a type without a schema (`[String]`) | ❌ `requires that 'String' conform to 'Parsable'` |
-| Property without a type annotation | ❌ `@Schema needs an explicit type` |
-| Plain `@Schema` struct inside a `@JSONSchema` struct | ❌ `'TodoList.Input' does not conform to protocol 'Decodable'` |
-| Input/parsed name mismatch | Impossible with `@Schema` (one name list) |
-| Constructing a field without its schema (`NonEmptyString("")`) | ❌ `initializer is inaccessible due to 'private' protection level` |
-| `@Codec` without `codec` | ❌ `@Codec needs 'static let codec: …'` |
-| `codec` without a type annotation | ❌ `'codec' needs an explicit type` |
-| `encode` returning the wrong type | ❌ `cannot convert value of type …` |
-| Hand-written `let value` next to `@Codec` | ❌ `invalid redeclaration of 'value'` |
+- **Nesting depth.** `JSONDecoder` rejects JSON nested deeper than 512 levels with `.malformed`; a todo
+  uses 2 levels (`{` and `[`), so about 255 todos deep is the most a JSON tree accepts. Parsing calls itself
+  once per level and is bounded by the thread's stack: a debug build on a 512 KB stack crashed between 90
+  and 100 todos deep. Decode deep trees on a thread with a larger stack (the main thread has 8 MB), or keep
+  models shallow.
+- **`public` models need `public` field types**, otherwise: `initializer cannot be declared public because
+  its parameter uses an internal type`.
+- **Typed throws aren't inferred for closures** (Swift 6.3): write `throws(F)` functions with straight-line
+  `try result.get()` instead of throwing closures.
+- **Unverified:** typed throws at the iOS 17 deployment target; CI may need `-skipMacroValidation`.
+- A field type cannot wrap a model; nest models directly instead.
 
-## Costs and open risks
-
-- **`public` structs need public field types:** a `public` `@Schema` struct whose field
-  types are internal fails (`initializer cannot be declared public because its parameter
-  uses an internal type`). Make the field types public; their `init` stays private.
-- **Encode round-trips the normalized value:** `" Ada@Example.com "` encodes as
-  `"ada@example.com"`, and `NumberFromString` `"36"` encodes as `"36.0"`.
-- **Typed throws in closures aren't inferred** (Swift 6.3 without `FullTypedThrows`):
-  write straight-line `throws(F)` bodies (`try result.get(or: F.wrap)`, see `Client.swift`) instead of
-  `throws(F)` closures.
-- Depends on `swift-syntax` (resolved 600.0.1); first clean build took 38 seconds.
-- Xcode requires trusting the macro; CI likely needs `-skipMacroValidation` (unverified).
-- Typed throws (`throws(Failure)`) at `iOS 17` deployment target: unverified.
-- Building with `safe.bareRepository=explicit` in global git config breaks SwiftPM's
-  cache; override per command: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build`.
-
-## Run
+## Development
 
 ```sh
-swift run Example   # prints "schema: all checks passed"
-swift test          # smoke tests: Tests/SchemaSmokeTests (todo list: 4 nested object levels, recursion, 11 issues in one parse)
+swift test
 ```
+
+| Directory | Contents |
+|---|---|
+| `Sources/Schema/` | Library: `Schema.swift` (steps, `Codec`), `Field.swift`, `Issues.swift`, `JSON.swift`, `SchemaMacro.swift` (macro declarations) |
+| `Sources/SchemaMacros/` | Macro implementations: `SchemaMacro.swift` (`@Schema`, `@JSONSchema`), `CodecMacro.swift` |
+| `Tests/SchemaTests/` | Unit tests, one file per library file |
+| `Tests/SchemaMacrosTests/` | Generated-code snapshots and every macro error message |
+| `Tests/SchemaSmokeTests/` | A full todo-list domain: fixtures, round trips, 500 seeded random trees, 10,000 items, Unicode, hostile JSON, depth limits, 200 parallel decodes |
