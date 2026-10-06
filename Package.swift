@@ -28,6 +28,9 @@ let package = Package(
         .testTarget(
             name: "SchemaTests", dependencies: ["Schema"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
+            name: "SchemaReadmeTests", dependencies: ["Schema", "XMLCoder"],
+            swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(
             name: "SchemaXMLTests", dependencies: ["Schema", "XMLCoder"],
             swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(

@@ -25,14 +25,6 @@ let todo = try Todo.decode(json: Data(#"{ "title": "  Buy milk " }"#.utf8)).get(
 todo.title.value  // "Buy milk"
 ```
 
-## About
-
-Most input handling checks a `String` with a few `if`s and passes the same `String` along. Nothing
-records that the check happened, so the next layer checks again or forgets to.
-
-swift-schema **parses** instead. A rule turns raw input into a new type, such as `Title`, and the
-only way to get a `Title` is through its rule. If a function takes a `Title`, the check has already happened.
-
 ## Features
 
 - **One place per rule:** a field type owns its decode and encode, typed once.
@@ -47,10 +39,12 @@ only way to get a `Title` is through its rule. If a function takes a `Title`, th
 - **JSON in, JSON out:** `decode(json:)` and `json()` for `@JSONSchema` types, with snake_case keys,
   defaults, strict mode, and custom or unknown union tags.
 
-## What is "parse, don't validate"?
+## Why parse?
 
-Parsing checks the input like validation does, and also returns a more precise type that records the result,
-so the check never has to be repeated. See [Parse, don't (just) validate](https://mtsknn.fi/blog/parse-dont-just-validate/).
+Validation checks a `String` with a few `if`s and passes the same `String` along. Nothing records that the
+check happened, so the next layer checks again or forgets to. Parsing checks the same rules and returns a
+new type, such as `Title`, that only the rule can create: a function that takes a `Title` needs no check.
+See [Parse, don't (just) validate](https://mtsknn.fi/blog/parse-dont-just-validate/).
 
 Validating keeps the raw type:
 
@@ -74,6 +68,17 @@ case .failure(let failure): print(failure)  // .blank or .tooLong
 }
 ```
 
+### Why not just `Codable`?
+
+| | `Codable` alone | swift-schema |
+|---|---|---|
+| Errors | `JSONDecoder` throws at the first problem | Every problem, each with its path |
+| Rules (trim, length, email…) | Hand-written in `init(from:)` or after decoding | One `codec` per field type, reused by every model |
+| Types after decoding | `String`, so every layer checks again | `Title`, `Email`: proof the rule ran |
+| Writing back | Whatever was decoded | The normalized values (`json()`) |
+
+Plain `Codable` is enough when the data is trusted and has no rules.
+
 ## Installation
 
 Swift 6.0 tools or later (Xcode 16+); macOS 13 / iOS 16. Your app may use the Swift 5 or Swift 6 language mode.
@@ -89,18 +94,13 @@ targets: [
 ```
 
 `@Codec`, `@Schema` and `@JSONSchema` are Swift macros: Xcode asks you to trust the macro once.
-
-# Documentation
-
-- [Getting Started](#getting-started)
-- [API Reference](#api-reference)
-- [Compile-time guarantees](#compile-time-guarantees)
-- [Limitations](#limitations)
-- [Development](#development)
+On CI, `xcodebuild` cannot ask, so pass `-skipMacroValidation`
+(`swift build` and `swift test` need no flag).
 
 ## Getting Started
 
-We build a todo list that arrives as JSON.
+We build a todo list that arrives as JSON. Every snippet below compiles and every output shown is checked
+in `Tests/SchemaReadmeTests/ReadmeTests.swift`.
 
 ### 1. Name your failures
 
@@ -801,6 +801,7 @@ git push origin 0.1.0   # a tag with a hyphen, e.g. 0.2.0-beta.1, becomes a prer
 | `Tests/SchemaTests/` | Unit tests, one file per library file |
 | `Tests/SchemaMacrosTests/` | Generated-code snapshots and every macro error message |
 | `Tests/SchemaSmokeTests/` | A full todo-list domain: fixtures, round trips, 500 seeded random trees, 10,000 items, Unicode, hostile JSON, depth limits, 200 parallel decodes |
+| `Tests/SchemaReadmeTests/` | Every README snippet and documented output; update it with the README |
 | `Tests/SchemaXMLTests/` | `decode(_:using:)` with XMLCoder: repeated elements, absent and empty elements, attributes |
 
 ## License
