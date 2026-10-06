@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PACKAGE_REPOSITORY_URL: ${{ vars.PACKAGE_REPOSITORY_URL }}
+        run: |
+          if [ -z "$PACKAGE_REPOSITORY_URL" ]; then
+            echo "::error::Set the repository variable PACKAGE_REPOSITORY_URL"
+            exit 1
+          fi
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          # shellcheck disable=SC2016 # backticks are Markdown, not command substitution
+          notes=$(printf '## Install\n\n```swift\n.package(url: "%s", from: "%s")\n```\n\nThen add `.product(name: "Schema", package: "swift-schema")` to your target.\n' "$PACKAGE_REPOSITORY_URL" "$TAG")
+          gh release create "$TAG" --verify-tag --generate-notes --notes "$notes" $prerelease
