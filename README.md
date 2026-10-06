@@ -49,6 +49,9 @@ only way to get a `Title` is through its rule. If a function takes a `Title`, th
 
 ## What is "parse, don't validate"?
 
+Parsing checks the input like validation does, and also returns a more precise type that records the result,
+so the check never has to be repeated. See [Parse, don't (just) validate](https://mtsknn.fi/blog/parse-dont-just-validate/).
+
 Validating keeps the raw type:
 
 ```swift
@@ -73,12 +76,12 @@ case .failure(let failure): print(failure)  // .blank or .tooLong
 
 ## Installation
 
-Swift 6.0 tools or later; macOS 15 / iOS 17.
+Swift 6.0 tools or later (Xcode 16+); macOS 13 / iOS 16. Your app may use the Swift 5 or Swift 6 language mode.
 
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "[REF NEEDED: repository URL]", branch: "main"),
+    .package(url: "[REF NEEDED: repository URL]", from: "0.1.0"),
 ],
 targets: [
     .target(name: "App", dependencies: [.product(name: "Schema", package: "swift-schema")]),
@@ -773,13 +776,33 @@ Each row was checked by introducing the mistake and building.
 ## Development
 
 ```sh
-swift test
+swift test                                                        # Swift 6 language mode
+sed -i '' 's/\.v6/.v5/g' Package.swift; swift test; git checkout Package.swift   # Swift 5 language mode
+xcrun swift-format format -i -r -p Sources Tests Package.swift    # format (settings in .swift-format)
+xcrun swift-format lint --strict -r -p Sources Tests Package.swift
+```
+
+CI (`.github/workflows/ci.yml`) runs the lint, an iOS simulator build and both test runs on every push to `master`
+and every pull request.
+
+To release, push a version tag. `.github/workflows/release.yml` runs CI, then creates a GitHub Release with
+generated notes. Set the repository variable `PACKAGE_REPOSITORY_URL` first; the install snippet in the notes uses it.
+
+```sh
+git tag 0.1.0
+git push origin 0.1.0   # a tag with a hyphen, e.g. 0.2.0-beta.1, becomes a prerelease
 ```
 
 | Directory | Contents |
 |---|---|
 | `Sources/Schema/` | Library: `Schema.swift` (steps, `Codec`), `Field.swift`, `Issues.swift`, `JSON.swift`, `SchemaMacro.swift` (macro declarations) |
-| `Sources/SchemaMacros/` | Macro implementations: `SchemaMacro.swift` (`@Schema`, `@JSONSchema`), `CodecMacro.swift` |
+| `Sources/Schema/Primitives/` | Built-in steps for `String`, numbers and arrays |
+| `Sources/SchemaMacros/` | Macro implementations: `SchemaMacro.swift` (`@Schema`, `@JSONSchema`), `CodecMacro.swift`, `MarkerMacro.swift` |
 | `Tests/SchemaTests/` | Unit tests, one file per library file |
 | `Tests/SchemaMacrosTests/` | Generated-code snapshots and every macro error message |
 | `Tests/SchemaSmokeTests/` | A full todo-list domain: fixtures, round trips, 500 seeded random trees, 10,000 items, Unicode, hostile JSON, depth limits, 200 parallel decodes |
+| `Tests/SchemaXMLTests/` | `decode(_:using:)` with XMLCoder: repeated elements, absent and empty elements, attributes |
+
+## License
+
+MIT. See [LICENSE](LICENSE).

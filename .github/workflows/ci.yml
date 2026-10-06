@@ -16,6 +16,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Lint
         run: xcrun swift-format lint --strict -r -p Sources Tests Package.swift
+      - name: Build for iOS (minimum iOS 16)
+        run: xcodebuild -scheme swift-schema -destination 'generic/platform=iOS Simulator' build
       - name: Test (Swift 6 language mode)
         run: swift test
       - name: Test (Swift 5 language mode)
