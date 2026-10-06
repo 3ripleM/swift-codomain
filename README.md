@@ -757,10 +757,7 @@ Each row was checked by introducing the mistake and building.
 
 ## Limitations
 
-- **Nesting depth.** `JSONDecoder` rejects JSON nested deeper than 512 levels with `.unreadable`; a todo
-  uses 2 levels (`{` and `[`), so about 255 todos deep is the most a JSON tree accepts. Reading and parsing
-  call themselves once per level and are bounded by the thread's stack: a debug build on a 512 KB stack
-  crashed between 90 and 100 todos deep in `parse(_:)` (`decode(json:)` not measured). Decode deep trees on
+- **Nesting depth.** `JSONDecoder` rejects JSON nested deeper than 512 levels with `.unreadable`; Decode deep trees on
   a thread with a larger stack (the main thread has 8 MB), or keep models shallow.
 - **`public` models need `public` field types**, otherwise: `initializer cannot be declared public because
   its parameter uses an internal type`.
